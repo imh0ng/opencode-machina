@@ -32,33 +32,4 @@ jobs:
         run: bun test
 
       - name: Parity sweep gate
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('.sisyphus/plans/artifacts/machina-parity-matrix.md')
-          text = p.read_text(encoding='utf-8').splitlines()
-          start = end = None
-          for i, line in enumerate(text):
-              if line.startswith('| Domain | Audit Source |'):
-                  start = i + 2
-              if start is not None and line.strip() == 'Notes for partial/missing handling:':
-                  end = i
-                  break
-          if start is None or end is None:
-              raise SystemExit('PARITY_SWEEP_FAILED: audit-synthesis section not found')
-          rows = text[start:end]
-          bad = []
-          for row in rows:
-              cols = [c.strip() for c in row.split('|')]
-              if len(cols) < 6:
-                  continue
-              classification = cols[4].lower()
-              if classification in {'partial', 'missing'}:
-                  bad.append(row)
-          if bad:
-              print('PARITY_SWEEP_FAILED: unresolved classifications detected')
-              for row in bad:
-                  print(row)
-              raise SystemExit(1)
-          print('PARITY_SWEEP_PASS: no partial/missing in audit-synthesis section')
-          PY
+        run: bun run check:parity-sweep
