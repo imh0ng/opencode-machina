@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { defaultsUrl, getPluginStatus, info, resolvePluginRegistration } from "./index"
+import { defaultsUrl, getPluginStatus, info, OpenMachinaPlugin, resolvePluginRegistration } from "./index"
 
 test("defaultsUrl points at workspace defaults.json", async () => {
   expect(defaultsUrl.pathname.endsWith("/config/defaults.json")).toBe(true)
@@ -36,4 +36,31 @@ test("getPluginStatus returns actionable invalid mode error", async () => {
     expect(out.code).toBe("INVALID_MODE")
     expect(out.hint.includes("local, dev, or prod")).toBe(true)
   }
+})
+
+test("OpenMachinaPlugin returns tool hooks compatible with OpenCode", async () => {
+  const hooks = await OpenMachinaPlugin({
+    directory: "/tmp/project",
+    worktree: "/tmp/project",
+    serverUrl: new URL("http://localhost:4096"),
+  })
+
+  expect(typeof hooks.tool).toBe("object")
+  expect(Object.keys(hooks.tool ?? {})).toContain("open_machina_info")
+  expect(Object.keys(hooks.tool ?? {})).toContain("open_machina_connectors")
+  expect(Object.keys(hooks.tool ?? {})).toContain("open_machina_workspace")
+
+  if (!hooks.tool?.open_machina_info) {
+    throw new Error("open_machina_info tool missing")
+  }
+
+  const out = await hooks.tool.open_machina_info.execute({}, {
+    sessionID: "s-1",
+    messageID: "m-1",
+    agent: "default",
+    directory: "/tmp/project",
+    worktree: "/tmp/project",
+  })
+  const payload = JSON.parse(out) as { identity: { name: string } }
+  expect(payload.identity.name).toBe("open-machina")
 })

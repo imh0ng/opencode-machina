@@ -1,3 +1,5 @@
+import { createDefaultChannelConnectors } from "open-machina-shared"
+
 export const defaultsUrl = new URL("../../../config/defaults.json", import.meta.url)
 
 export type PluginMode = "local" | "dev" | "prod"
@@ -40,6 +42,31 @@ export type PluginStatus =
       hint: string
       registration?: PluginRegistration
     }
+
+type OpenCodePluginInput = {
+  directory: string
+  worktree: string
+  serverUrl: URL
+}
+
+type OpenCodeToolContext = {
+  sessionID: string
+  messageID: string
+  agent: string
+  directory: string
+  worktree: string
+}
+
+type OpenCodeTool = {
+  description: string
+  args: Record<string, unknown>
+  execute: (args: Record<string, unknown>, context: OpenCodeToolContext) => Promise<string>
+}
+
+type OpenCodeHooks = {
+  tool?: Record<string, OpenCodeTool>
+  config?: (input: Record<string, unknown>) => Promise<void>
+}
 
 export async function info() {
   const config = await getDefaultsConfig()
@@ -133,6 +160,62 @@ export async function getPluginStatus(env: NodeJS.ProcessEnv = process.env): Pro
     registration,
   }
 }
+
+export async function OpenMachinaPlugin(input: OpenCodePluginInput): Promise<OpenCodeHooks> {
+  return {
+    tool: {
+      open_machina_info: {
+        description: "Returns open-machina runtime identity and plugin registration status.",
+        args: {},
+        execute: async () => {
+          const identity = await info()
+          const status = await getPluginStatus(process.env)
+          return JSON.stringify(
+            {
+              identity,
+              status,
+            },
+            null,
+            2,
+          )
+        },
+      },
+      open_machina_connectors: {
+        description: "Lists available open-machina channel connectors.",
+        args: {},
+        execute: async () => {
+          const connectors = createDefaultChannelConnectors().map((item) => item.id)
+          return JSON.stringify({ connectors }, null, 2)
+        },
+      },
+      open_machina_workspace: {
+        description: "Returns OpenCode workspace metadata seen by open-machina plugin.",
+        args: {},
+        execute: async (_args, ctx) => {
+          return JSON.stringify(
+            {
+              directory: input.directory,
+              worktree: input.worktree,
+              serverUrl: input.serverUrl.toString(),
+              session: {
+                sessionID: ctx.sessionID,
+                messageID: ctx.messageID,
+                agent: ctx.agent,
+              },
+            },
+            null,
+            2,
+          )
+        },
+      },
+    },
+    config: async (_input) => {
+      return
+    },
+  }
+}
+
+export default OpenMachinaPlugin
 
 function isPluginMode(value: string): value is PluginMode {
   return value === "local" || value === "dev" || value === "prod"

@@ -35,12 +35,15 @@ test("runCli install prints npm and bunx usage", async () => {
   const payload = JSON.parse(out.stdout) as {
     command: string
     usage: { npmGlobal: string; bunx: string; run: string }
+    opencode: { recommended: string[]; npmPublishedAlternative: string[] }
   }
 
   expect(payload.command).toBe("open-machina install")
   expect(payload.usage.npmGlobal).toBe("npm install -g open-machina")
   expect(payload.usage.bunx).toBe("bunx open-machina --help")
   expect(payload.usage.run).toBe("open-machina --help")
+  expect(payload.opencode.recommended[0]).toBe("oh-my-opencode")
+  expect(payload.opencode.npmPublishedAlternative).toEqual(["oh-my-opencode", "open-machina-plugin"])
 })
 
 test("runCli workflow list exposes at least five concrete workflows", async () => {

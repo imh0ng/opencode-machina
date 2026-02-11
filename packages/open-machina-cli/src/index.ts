@@ -185,6 +185,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
 
   if (args[0] === "install") {
     const shell = detectShell(env)
+    const pluginPath = resolve(process.cwd(), "packages/open-machina-plugin/dist/index.js")
     return {
       code: 0,
       stdout: JSON.stringify(
@@ -202,6 +203,11 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
             zsh: "open-machina completion zsh",
             fish: "open-machina completion fish",
             powershell: "open-machina completion powershell",
+          },
+          opencode: {
+            pluginConfigField: "plugin",
+            recommended: ["oh-my-opencode", `file://${pluginPath}`],
+            npmPublishedAlternative: ["oh-my-opencode", "open-machina-plugin"],
           },
         },
         null,

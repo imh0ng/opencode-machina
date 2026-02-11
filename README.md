@@ -51,17 +51,45 @@ bunx open-machina --help
 bunx open-machina install
 ```
 
-### Integration with OpenCode
+### Integration with OpenCode (Correct Plugin Loading)
 
-Machina is designed as an OpenCode plugin. After building:
+`open-machina` does **not** get loaded by `oh-my-opencode` directly.
 
-1. Install the plugin package to your OpenCode configuration
-2. Configure oh-my-opencode to load Machina agents
-3. Start OpenCode with the plugin enabled
+OpenCode itself loads plugins from `opencode.json` (`plugin: string[]`), then initializes each plugin module.
+So you should configure OpenCode to load **both**:
+
+1. `oh-my-opencode` (agent/tool framework)
+2. `open-machina-plugin` (Machina orchestration layer)
+
+Example `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    "oh-my-opencode",
+    "file:///ABSOLUTE_PATH_TO/open-machina/packages/open-machina-plugin/dist/index.js"
+  ]
+}
+```
+
+If `open-machina-plugin` is published to npm, you can use package form instead of file URL:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    "oh-my-opencode",
+    "open-machina-plugin"
+  ]
+}
+```
+
+Then start OpenCode normally and run:
 
 ```bash
-# Run the Open Machina CLI
 open-machina --help
+open-machina install
 ```
 
 ### Verify Installation
