@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-v-in-tag": true,
+  "separate-pull-requests": true,
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "Features"
+    },
+    {
+      "type": "fix",
+      "section": "Bug Fixes"
+    },
+    {
+      "type": "chore",
+      "section": "Miscellaneous",
+      "hidden": false
+    }
+  ],
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "component": "opencode-machina",
+      "package-name": "opencode-machina",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "packages/machina-cli": {
+      "release-type": "node",
+      "component": "machina-cli",
+      "package-name": "machina-cli",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "packages/machina-plugin": {
+      "release-type": "node",
+      "component": "machina-plugin",
+      "package-name": "machina-plugin",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "packages/machina-shared": {
+      "release-type": "node",
+      "component": "machina-shared",
+      "package-name": "machina-shared",
+      "changelog-path": "CHANGELOG.md"
+    },
+    "packages/machina-web": {
+      "release-type": "node",
+      "component": "machina-web",
+      "package-name": "@opencode-machina/machina-web",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}

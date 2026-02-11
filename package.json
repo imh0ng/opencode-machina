@@ -11,7 +11,8 @@
     "run": "bun script/run.ts",
     "build": "bun --cwd=packages/machina-shared run build && bun --cwd=packages/machina-plugin run build && bun --cwd=packages/machina-cli run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "bun test"
+    "test": "bun test",
+    "check:forbidden-terms": "bun script/check-forbidden-terms.ts"
   },
   "devDependencies": {
     "@tsconfig/bun": "1.0.9",

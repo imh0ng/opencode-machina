@@ -1,0 +1,28 @@
+# Code Owners for OpenCode Machina
+#
+# This file defines who owns specific files/directories and requires their review
+# for changes. Lines starting with # are comments.
+#
+# Format:
+#   path/to/file @owner1 @owner2
+#   path/to/directory/ @owner
+#
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global maintainers - review all PRs by default
+# Update these usernames when maintainers are added
+# * @maintainer1 @maintainer2
+
+# Release governance - requires review for RELEASE.md changes
+# RELEASE.md @release-maintainer
+
+# Security files - requires security team review
+# SECURITY.md @security-team
+
+# Core packages - requires maintainer review
+# packages/ @maintainer
+
+# Configuration files - requires maintainer review
+# .github/ @maintainer
+# tsconfig.json @maintainer
+# package.json @maintainer
