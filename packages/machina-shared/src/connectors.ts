@@ -18,6 +18,12 @@ export type DiscordConnectorConfig = {
   botToken: string
 }
 
+type TokenConnectorConfig = {
+  accountId: string
+  endpoint: string
+  accessToken: string
+}
+
 export function createMatrixConnector(): ChannelConnector<MatrixConnectorConfig> {
   return {
     id: "matrix",
@@ -50,7 +56,7 @@ export function createMatrixConnector(): ChannelConnector<MatrixConnectorConfig>
 
       return connected({
         accountId: config.userId,
-        endpoint: `${config.homeserverUrl}/${config.roomId}`,
+        endpoint: `${stripTrailingSlash(config.homeserverUrl)}/${stripLeadingSlash(config.roomId)}`,
       })
     },
     disconnect: async () => ({ status: "disconnected" }),
@@ -94,8 +100,76 @@ export function createDiscordConnector(): ChannelConnector<DiscordConnectorConfi
   }
 }
 
+export function createSlackConnector(): ChannelConnector<TokenConnectorConfig> {
+  return createTokenConnector("slack", "slack")
+}
+
+export function createSignalConnector(): ChannelConnector<TokenConnectorConfig> {
+  return createTokenConnector("signal", "signal")
+}
+
+export function createTelegramConnector(): ChannelConnector<TokenConnectorConfig> {
+  return createTokenConnector("telegram", "telegram")
+}
+
+export function createWhatsAppWebConnector(): ChannelConnector<TokenConnectorConfig> {
+  return createTokenConnector("whatsapp-web", "whatsapp")
+}
+
 export function createDefaultChannelConnectors(): Array<ChannelConnector<unknown>> {
-  return [createMatrixConnector(), createDiscordConnector()] as Array<ChannelConnector<unknown>>
+  const connectors = [
+    createDiscordConnector(),
+    createMatrixConnector(),
+    createSignalConnector(),
+    createSlackConnector(),
+    createTelegramConnector(),
+    createWhatsAppWebConnector(),
+  ]
+
+  return connectors.sort((left, right) => left.id.localeCompare(right.id)) as Array<ChannelConnector<unknown>>
+}
+
+function createTokenConnector(id: string, provider: string): ChannelConnector<TokenConnectorConfig> {
+  return {
+    id,
+    validateConfig: (config) => {
+      const candidate = asRecord(config)
+      const accountId = requireString(candidate, "accountId")
+      const endpoint = requireString(candidate, "endpoint")
+      const accessToken = requireString(candidate, "accessToken")
+      const errors = [accountId.error, endpoint.error, accessToken.error].filter(
+        (value): value is string => typeof value === "string",
+      )
+
+      if (errors.length > 0) {
+        return invalidConfig(`${provider} config validation failed: ${errors.join("; ")}`)
+      }
+
+      return {
+        ok: true,
+        config: {
+          accountId: accountId.value,
+          endpoint: endpoint.value,
+          accessToken: accessToken.value,
+        },
+      }
+    },
+    connect: async (config) => {
+      assertCredential(config.accessToken, provider)
+      return connected({
+        accountId: config.accountId,
+        endpoint: normalizeProviderEndpoint(provider, config.endpoint),
+      })
+    },
+    disconnect: async () => ({ status: "disconnected" }),
+  }
+}
+
+function normalizeProviderEndpoint(provider: string, endpoint: string): string {
+  const normalizedProvider = provider.trim().toLowerCase()
+  const withoutPrefix = endpoint.trim().replace(new RegExp(`^${escapeRegExp(normalizedProvider)}://`, "i"), "")
+  const withoutLeadingSlash = withoutPrefix.replace(/^\/+/, "")
+  return `${normalizedProvider}://${withoutLeadingSlash}`
 }
 
 function assertCredential(rawCredential: string, provider: string): void {
@@ -115,6 +189,18 @@ function isInvalidCredential(value: string): boolean {
     normalized.includes("bad") ||
     normalized.includes("wrong")
   )
+}
+
+function stripTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "")
+}
+
+function stripLeadingSlash(value: string): string {
+  return value.replace(/^\/+/, "")
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 function connected(input: { accountId: string; endpoint: string }): ChannelConnectResult {

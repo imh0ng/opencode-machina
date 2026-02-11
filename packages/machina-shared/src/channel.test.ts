@@ -130,6 +130,79 @@ test("invalid credentials fail deterministically without secret echo", async () 
   }
 })
 
+test("disconnect is idempotent and does not mutate disconnected state", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "machina-channel-idempotent-disconnect-"))
+
+  try {
+    const registry = makeRegistry(storageDir)
+
+    await registry.connect({
+      channelId: "idempotent-room",
+      connectorId: "matrix",
+      config: {
+        homeserverUrl: "https://matrix.example.org",
+        userId: "@idempotent:example.org",
+        roomId: "!idempotent:example.org",
+        accessToken: "matrix-token-idempotent",
+      },
+    })
+
+    const first = await registry.disconnect("idempotent-room")
+    const second = await registry.disconnect("idempotent-room")
+
+    expect(first.status).toBe("disconnected")
+    expect(second.status).toBe("disconnected")
+    expect(second.connectorId).toBe("matrix")
+    expect(second.updatedAt).toBe(first.updatedAt)
+    expect(second.error).toBeNull()
+  } finally {
+    await rm(storageDir, { recursive: true, force: true })
+  }
+})
+
+test("upstream connector errors are sanitized before throw and persisted status", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "machina-channel-redaction-"))
+  const leakedSecret = "secret=super-secret-token-1234567890"
+
+  try {
+    const registry = new ChannelRegistry({ storageDir })
+    registry.register({
+      id: "failing-upstream",
+      validateConfig: () => ({ ok: true, config: {} }),
+      connect: async () => {
+        throw new Error(`upstream auth failed: ${leakedSecret}`)
+      },
+      disconnect: async () => ({ status: "disconnected" }),
+    })
+
+    let errorCode = ""
+    let errorMessage = ""
+    try {
+      await registry.connect({
+        channelId: "upstream-room",
+        connectorId: "failing-upstream",
+        config: {},
+      })
+    } catch (error) {
+      const normalized = error as ChannelRuntimeError
+      errorCode = normalized.code
+      errorMessage = normalized.message
+    }
+
+    expect(errorCode).toBe("CHANNEL_CONNECT_FAILED")
+    expect(errorMessage.includes(leakedSecret)).toBe(false)
+    expect(errorMessage.includes("[REDACTED]")).toBe(true)
+
+    const status = await registry.status("upstream-room")
+    expect(status.status).toBe("disconnected")
+    expect(status.error?.code).toBe("CHANNEL_CONNECT_FAILED")
+    expect((status.error?.message ?? "").includes(leakedSecret)).toBe(false)
+    expect((status.error?.message ?? "").includes("[REDACTED]")).toBe(true)
+  } finally {
+    await rm(storageDir, { recursive: true, force: true })
+  }
+})
+
 test("config validation failure returns deterministic validation code", async () => {
   const storageDir = await mkdtemp(join(tmpdir(), "machina-channel-config-"))
 

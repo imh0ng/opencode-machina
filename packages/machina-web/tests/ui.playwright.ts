@@ -16,6 +16,8 @@ test.describe('Machina Web UI', () => {
         return getComputedStyle(el).getPropertyValue('--machina-accent').trim();
     });
     expect(accent).toBe('#00FFB3');
+    
+    await page.screenshot({ path: '../../../.sisyphus/evidence/machina-full-parity/task-8-web-ui-dark.png' });
   });
 
   test('theme toggle works and persists', async ({ page }) => {
@@ -28,6 +30,8 @@ test.describe('Machina Web UI', () => {
     
     await toggle.click();
     await expect(html).toHaveAttribute('data-theme', 'light');
+    
+    await page.screenshot({ path: '../../../.sisyphus/evidence/machina-full-parity/task-8-web-ui-light.png' });
     
     await page.reload();
     await expect(html).toHaveAttribute('data-theme', 'light');

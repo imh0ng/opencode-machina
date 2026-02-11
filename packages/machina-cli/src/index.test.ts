@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { banner, runCli } from "./index"
@@ -12,15 +12,20 @@ type WorkflowLog = {
   finishedAt: string
 }
 
-test("banner() includes brand", () => {
-  expect(banner()).toContain("machina")
+test("banner() includes identity markers", () => {
+  const b = banner()
+  expect(b).toContain("machina")
+  expect(b).toContain("🤖")
+  expect(b).toContain("\x1b[38;2;0;255;157m")
 })
 
-test("runCli --version prints marker and version", async () => {
+test("runCli --version prints marker, version, and identity", async () => {
   const out = await runCli(["--version"])
 
   expect(out.code).toBe(0)
-  expect(out.stdout.includes("[MACHINA] machina ")).toBe(true)
+  expect(out.stdout).toContain("[MACHINA] machina ")
+  expect(out.stdout).toContain("🤖")
+  expect(out.stdout).toContain("\x1b[38;2;0;255;157m")
 })
 
 test("runCli workflow list exposes at least five concrete workflows", async () => {
@@ -218,4 +223,320 @@ test("channel connect invalid credentials returns deterministic non-secret error
   } finally {
     await rm(storageDir, { recursive: true, force: true })
   }
+})
+
+test("profile list returns deterministic profiles and active profile", async () => {
+  const out = await runCli(["profile", "list"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    activeProfile: string
+    profiles: Array<{ id: string; pluginMode: string }>
+  }
+
+  expect(payload.activeProfile).toBe("default")
+  expect(payload.profiles.map((item) => item.id)).toContain("default")
+  expect(payload.profiles.map((item) => item.id)).toContain("ops")
+  expect(payload.profiles.find((item) => item.id === "ops")?.pluginMode).toBe("dev")
+})
+
+test("profile use returns deterministic missing-profile error", async () => {
+  const out = await runCli(["profile", "use", "missing"])
+  expect(out.code).toBe(2)
+  expect(out.stderr).toContain("PROFILE_NOT_FOUND")
+
+  const payload = JSON.parse(out.stdout) as { code: string; profileId: string }
+  expect(payload.code).toBe("PROFILE_NOT_FOUND")
+  expect(payload.profileId).toBe("missing")
+})
+
+test("doctor command without --json is supported for task 3 parity", async () => {
+  const out = await runCli(["doctor"], { MACHINA_PLUGIN_MODE: "local" })
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as { status: string; result: { plugin: { status: string } } }
+  expect(payload.status).toBe("completed")
+  expect(payload.result.plugin.status).toBe("loaded")
+})
+
+test("nodes status reports deterministic node summary", async () => {
+  const out = await runCli(["nodes", "status"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    nodes: Array<{ id: string; state: string }>
+    summary: { total: number; online: number; offline: number }
+  }
+
+  expect(payload.summary.total).toBe(2)
+  expect(payload.summary.online).toBe(1)
+  expect(payload.summary.offline).toBe(1)
+  expect(payload.nodes.map((item) => item.id)).toContain("node-alpha")
+})
+
+test("nodes status returns deterministic unknown node error", async () => {
+  const out = await runCli(["nodes", "status", "--node=missing-node"])
+  expect(out.code).toBe(2)
+  expect(out.stderr).toContain("NODE_NOT_FOUND")
+
+  const payload = JSON.parse(out.stdout) as { code: string; nodeId: string }
+  expect(payload.code).toBe("NODE_NOT_FOUND")
+  expect(payload.nodeId).toBe("missing-node")
+})
+
+test("logs tail supports deterministic stream filtering", async () => {
+  const out = await runCli(["logs", "tail", "--stream=daemon", "--lines=1"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    stream: string
+    lines: number
+    entries: Array<{ stream: string; message: string }>
+  }
+
+  expect(payload.stream).toBe("daemon")
+  expect(payload.lines).toBe(1)
+  expect(payload.entries.length).toBe(1)
+  expect(payload.entries[0]?.stream).toBe("daemon")
+})
+
+test("logs tail returns deterministic unsupported stream error", async () => {
+  const out = await runCli(["logs", "tail", "--stream=kernel"])
+  expect(out.code).toBe(2)
+  expect(out.stderr).toContain("LOG_STREAM_UNSUPPORTED")
+
+  const payload = JSON.parse(out.stdout) as { code: string; stream: string }
+  expect(payload.code).toBe("LOG_STREAM_UNSUPPORTED")
+  expect(payload.stream).toBe("kernel")
+})
+
+test("pair start returns deterministic pairing session", async () => {
+  const out = await runCli(["pair", "start", "device-bravo"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    status: string
+    sessionId: string
+    device: { id: string }
+  }
+
+  expect(payload.status).toBe("started")
+  expect(payload.sessionId).toBe("pair-device-bravo-0001")
+  expect(payload.device.id).toBe("device-bravo")
+})
+
+test("pair start returns deterministic missing device error", async () => {
+  const out = await runCli(["pair", "start", "ghost-device"])
+  expect(out.code).toBe(2)
+  expect(out.stderr).toContain("PAIR_DEVICE_NOT_FOUND")
+
+  const payload = JSON.parse(out.stdout) as { code: string; deviceId: string }
+  expect(payload.code).toBe("PAIR_DEVICE_NOT_FOUND")
+  expect(payload.deviceId).toBe("ghost-device")
+})
+
+test("sandbox status returns deterministic sandbox state", async () => {
+  const out = await runCli(["sandbox", "status"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as { id: string; status: string; profile: string }
+  expect(payload.id).toBe("default")
+  expect(payload.status).toBe("ready")
+  expect(payload.profile).toBe("default")
+})
+
+test("sandbox status returns deterministic unknown sandbox error", async () => {
+  const out = await runCli(["sandbox", "status", "ghost"])
+  expect(out.code).toBe(2)
+  expect(out.stderr).toContain("SANDBOX_NOT_FOUND")
+
+  const payload = JSON.parse(out.stdout) as { code: string; sandboxId: string }
+  expect(payload.code).toBe("SANDBOX_NOT_FOUND")
+  expect(payload.sandboxId).toBe("ghost")
+})
+
+test("update check returns deterministic installer payload", async () => {
+  const out = await runCli(["update", "check"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    updateAvailable: boolean
+    latestVersion: string
+    installer: { target: string }
+  }
+  expect(payload.updateAvailable).toBe(true)
+  expect(payload.latestVersion).toBe("0.1.1")
+  expect(payload.installer.target).toBe("darwin-arm64")
+})
+
+test("update returns deterministic usage error for unsupported subcommand", async () => {
+  const out = await runCli(["update", "upgrade"])
+  expect(out.code).toBe(1)
+  expect(out.stdout).toBe("")
+  expect(out.stderr).toBe("Unknown update subcommand. Usage: update check")
+})
+
+test("webhooks list returns deterministic webhook registry", async () => {
+  const out = await runCli(["webhooks", "list"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    webhooks: Array<{ id: string; enabled: boolean }>
+  }
+  expect(payload.webhooks.length).toBe(2)
+  expect(payload.webhooks[0]?.id).toBe("hook-build")
+})
+
+test("webhooks returns deterministic usage error for unsupported subcommand", async () => {
+  const out = await runCli(["webhooks", "sync"])
+  expect(out.code).toBe(1)
+  expect(out.stdout).toBe("")
+  expect(out.stderr).toBe("Unknown webhooks subcommand. Usage: webhooks list")
+})
+
+test("daemon status returns deterministic daemon health", async () => {
+  const out = await runCli(["daemon", "status"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    daemons: Array<{ name: string; status: string }>
+  }
+  expect(payload.daemons.map((item) => item.name)).toContain("machina-agent")
+  expect(payload.daemons.find((item) => item.name === "machina-agent")?.status).toBe("running")
+})
+
+test("daemon status returns deterministic daemon not found error", async () => {
+  const out = await runCli(["daemon", "status", "--name=unknown-daemon"])
+  expect(out.code).toBe(2)
+  expect(out.stderr).toContain("DAEMON_NOT_FOUND")
+
+  const payload = JSON.parse(out.stdout) as { code: string; daemonName: string }
+  expect(payload.code).toBe("DAEMON_NOT_FOUND")
+  expect(payload.daemonName).toBe("unknown-daemon")
+})
+
+test("completion bash returns deterministic completion script", async () => {
+  const out = await runCli(["completion", "bash"])
+  expect(out.code).toBe(0)
+  expect(out.stdout).toContain("# machina bash completion")
+  expect(out.stdout).toContain("complete -F _machina_complete machina")
+})
+
+test("completion returns deterministic unsupported shell error", async () => {
+  const out = await runCli(["completion", "tcsh"])
+  expect(out.code).toBe(2)
+  expect(out.stderr).toContain("COMPLETION_SHELL_UNSUPPORTED")
+
+  const payload = JSON.parse(out.stdout) as { code: string; shell: string }
+  expect(payload.code).toBe("COMPLETION_SHELL_UNSUPPORTED")
+  expect(payload.shell).toBe("tcsh")
+})
+
+test("tui keybindings exposes deterministic cli bridge contract", async () => {
+  const out = await runCli(["tui", "keybindings"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    compatibility: string
+    bridge: { deterministic: boolean }
+    keybindings: Array<{ key: string; action: string }>
+  }
+
+  expect(payload.compatibility).toBe("openclaw-keymap-v1")
+  expect(payload.bridge.deterministic).toBe(true)
+  expect(payload.keybindings.find((entry) => entry.key === "ctrl+r")?.action).toBe("workflow.run")
+})
+
+test("tool list includes lsp diagnostics tool", async () => {
+  const out = await runCli(["tool", "list"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as { tools: Array<{ id: string }> }
+  expect(payload.tools.some((tool) => tool.id === "lsp.diagnostics")).toBe(true)
+})
+
+test("tool run metadata returns deterministic summary", async () => {
+  const out = await runCli(["tool", "run", "tool.metadata", "--actor=test-agent", "--approve=false"])
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    status: string
+    result: { summary: { total: number; deterministicCount: number } }
+  }
+
+  expect(payload.status).toBe("completed")
+  expect(payload.result.summary.total).toBeGreaterThan(0)
+  expect(payload.result.summary.deterministicCount).toBeGreaterThan(0)
+})
+
+test("tool run mcp oauth status returns deterministic payload", async () => {
+  const out = await runCli(["tool", "run", "mcp.oauth.status", "--actor=test-agent", "--approve=false"], {
+    MACHINA_MCP_OAUTH_ENABLED: "true",
+  })
+  expect(out.code).toBe(0)
+
+  const payload = JSON.parse(out.stdout) as {
+    status: string
+    result: { oauth: { supported: boolean; flow: string } }
+  }
+
+  expect(payload.status).toBe("completed")
+  expect(payload.result.oauth.supported).toBe(true)
+  expect(payload.result.oauth.flow).toBe("device-code")
+})
+
+test("tool run privileged denial redacts secrets and records deterministic denial reason", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "machina-cli-tools-denied-redacted-"))
+  const secret = "token-cli-secret-7788"
+
+  try {
+    const out = await runCli([
+      "tool",
+      "run",
+      "storage.write-maintenance-marker",
+      "--approve=false",
+      "--actor=test-agent",
+      "--operation-id=op-cli-tools-denied-0001",
+      `--storage-dir=${storageDir}`,
+      `--input-json={"note":"${secret}"}`,
+    ])
+
+    expect(out.code).toBe(3)
+    expect((out.stderr ?? "")).toContain("POLICY_DENIED")
+    expect((out.stderr ?? "").includes(secret)).toBe(false)
+
+    const payload = JSON.parse(out.stdout) as { code: string; message: string }
+    expect(payload.code).toBe("POLICY_DENIED")
+    expect(payload.message.includes(secret)).toBe(false)
+
+    const auditRaw = await readFile(join(storageDir, "audit-log.jsonl"), "utf8")
+    expect(auditRaw.includes(secret)).toBe(false)
+    const audit = JSON.parse(auditRaw.trim()) as { denialReason: string; status: string; decision: string }
+    expect(audit.decision).toBe("denied")
+    expect(audit.status).toBe("blocked")
+    expect(audit.denialReason).toBe("privileged-approval-required")
+  } finally {
+    await rm(storageDir, { recursive: true, force: true })
+  }
+})
+
+test("workflow run long-running forced cancellation reports cleanup with no orphan", async () => {
+  const out = await runCli(["workflow", "run", "long-running", "--cancel-after-ms=75"])
+  expect(out.code).toBe(130)
+
+  const payload = JSON.parse(out.stdout) as {
+    result?: unknown
+    error?: string
+    tracker: { childPid: number | null; aliveAfterCleanup: boolean | null }
+    status: string
+    log: WorkflowLog
+  }
+
+  expect(payload.status).toBe("cancelled")
+  expect(payload.result).toBeUndefined()
+  expect(payload.error).toContain("Cancellation requested after 75ms")
+  expect(payload.tracker.childPid).not.toBeNull()
+  expect(payload.tracker.aliveAfterCleanup).toBe(false)
+  expect(payload.log.workflowName).toBe("long-running")
+  expect(payload.log.status).toBe("cancelled")
 })

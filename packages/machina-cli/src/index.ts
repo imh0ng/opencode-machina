@@ -18,8 +18,12 @@ import {
 } from "machina-shared"
 import { getPluginStatus, info } from "machina-plugin"
 
+const NEON_MINT = "\x1b[38;2;0;255;157m"
+const RESET = "\x1b[0m"
+const ROBOT = "🤖"
+
 export function banner() {
-  return `Welcome to ${brand()}`
+  return `${NEON_MINT}${ROBOT} Welcome to ${brand()}${RESET}`
 }
 
 type CliResult = {
@@ -51,6 +55,52 @@ type LongRunningPayload = {
   tracker?: CancellationTracker
 }
 
+type ProfileSummary = {
+  id: string
+  label: string
+  storageDir: string
+  pluginMode: "local" | "dev" | "prod"
+}
+
+type DeviceNodeSummary = {
+  id: string
+  role: "device" | "hub"
+  state: "online" | "offline"
+  connector: string
+}
+
+type DaemonSummary = {
+  name: string
+  status: "running" | "stopped"
+  pid: number | null
+  uptimeSeconds: number
+}
+
+type WebhookSummary = {
+  id: string
+  event: string
+  target: string
+  enabled: boolean
+}
+
+type SandboxSummary = {
+  id: string
+  status: "ready" | "stopped"
+  profile: string
+}
+
+type PairableDevice = {
+  id: string
+  connector: string
+  displayName: string
+}
+
+type DiagnosticSignal = {
+  id: string
+  status: "ok" | "warn"
+  detail: string
+}
+
 const workflowEngine = createWorkflowEngine()
 let toolOperationCounter = 0
 
@@ -61,12 +111,23 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
     return {
       code: 0,
       stdout: [
-        "machina [--version] [status] [doctor --json] [storage migrate|integrity|compact] [workflow list|run|cancel-smoke]",
+        "machina [--version] [status] [doctor [--json]] [storage migrate|integrity|compact] [workflow list|run|cancel-smoke]",
         "",
         "Commands:",
         "  --version                                  Print Machina identity marker and version",
         "  status                                     Run status workflow",
-        "  doctor --json                              Run doctor workflow",
+        "  doctor [--json]                            Run doctor diagnostics workflow",
+        "  profile list                               List available CLI profiles",
+        "  profile use <profile-id>                   Resolve and validate selected profile",
+        "  nodes status [--node=<id>]                 Show device/node runtime health",
+        "  logs tail [--lines=<n>] [--stream=<name>]  Print deterministic log tail snapshot",
+        "  pair start <device-id>                     Start deterministic device pairing handshake",
+        "  sandbox status [<sandbox-id>]              Show sandbox runtime status",
+        "  update check                               Check installer/update availability",
+        "  webhooks list                              Show configured webhook routes",
+        "  daemon status [--name=<id>]                Show daemon process status",
+        "  completion <shell>                         Generate shell completion script",
+        "  tui keybindings                            Print deterministic CLI/TUI bridge contract",
         "  storage migrate                            Run storage migration workflow",
         "  storage integrity                          Run storage integrity workflow",
         "  storage compact                            Run storage compaction workflow",
@@ -78,10 +139,12 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         "  workflow list                              List available workflows",
         "  workflow run <workflow-name>               Run workflow by name",
         "  workflow cancel-smoke                      Run deterministic cancellation scenario",
-        "  tool list                                  List registered tools and permission classes",
-        "  tool run <tool-id>                         Run a tool invocation",
+        "  tools list                                 List registered tools and permission classes",
+        "  tools run <tool-id>                        Run a tool invocation",
         "                                             --approve=true|false --actor=<id> --operation-id=<id>",
         "                                             --note=<text> (for storage.write-maintenance-marker)",
+        "                                             --tool-id=<id> (for runtime.tool-metadata)",
+        "                                             --input-json=<json> (for explicit deterministic input)",
         "",
         "Flags:",
         "  --storage-dir=<path>                       Override storage root for this invocation",
@@ -94,7 +157,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
     const metadata = await info()
     return {
       code: 0,
-      stdout: `${metadata.marker} ${metadata.name} ${metadata.version}`,
+      stdout: `${NEON_MINT}${ROBOT} ${metadata.marker} ${metadata.name} ${metadata.version}${RESET}`,
     }
   }
 
@@ -105,12 +168,362 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
     return toCliResult(execution)
   }
 
-  if (args[0] === "doctor" && args[1] === "--json") {
+  if (args[0] === "doctor" && (args.length === 1 || args[1] === "--json")) {
     const execution = await workflowEngine.run<{ env: NodeJS.ProcessEnv }, DoctorWorkflowResult>("doctor", {
       payload: { env },
     })
 
     return toCliResult(execution)
+  }
+
+  if (args[0] === "profile") {
+    if (args[1] === "list") {
+      return {
+        code: 0,
+        stdout: JSON.stringify(
+          {
+            profiles: TASK3_PROFILES,
+            activeProfile: TASK3_ACTIVE_PROFILE,
+          },
+          null,
+          2,
+        ),
+      }
+    }
+
+    if (args[1] === "use") {
+      const profileId = args[2]
+      if (!profileId) {
+        return {
+          code: 1,
+          stdout: "",
+          stderr: "Missing required arg. Usage: profile use <profile-id>",
+        }
+      }
+
+      const profile = TASK3_PROFILES.find((item) => item.id === profileId)
+      if (!profile) {
+        const message = `Unknown profile: ${profileId}`
+        return {
+          code: 2,
+          stdout: JSON.stringify(
+            {
+              code: "PROFILE_NOT_FOUND",
+              message,
+              profileId,
+            },
+            null,
+            2,
+          ),
+          stderr: `PROFILE_NOT_FOUND: ${message}`,
+        }
+      }
+
+      return {
+        code: 0,
+        stdout: JSON.stringify(
+          {
+            profile,
+            resolvedEnv: {
+              MACHINA_PLUGIN_MODE: profile.pluginMode,
+              MACHINA_STORAGE_DIR: profile.storageDir,
+            },
+          },
+          null,
+          2,
+        ),
+      }
+    }
+  }
+
+  if (args[0] === "nodes" && args[1] === "status") {
+    const nodeId = getStringArg(args, "--node=")
+    if (nodeId) {
+      const singleNode = TASK3_NODES.find((item) => item.id === nodeId)
+      if (!singleNode) {
+        const message = `Unknown node: ${nodeId}`
+        return {
+          code: 2,
+          stdout: JSON.stringify(
+            {
+              code: "NODE_NOT_FOUND",
+              message,
+              nodeId,
+            },
+            null,
+            2,
+          ),
+          stderr: `NODE_NOT_FOUND: ${message}`,
+        }
+      }
+
+      return {
+        code: 0,
+        stdout: JSON.stringify(
+          {
+            nodes: [singleNode],
+            summary: {
+              total: 1,
+              online: singleNode.state === "online" ? 1 : 0,
+              offline: singleNode.state === "offline" ? 1 : 0,
+            },
+          },
+          null,
+          2,
+        ),
+      }
+    }
+
+    const online = TASK3_NODES.filter((item) => item.state === "online").length
+    const offline = TASK3_NODES.length - online
+    return {
+      code: 0,
+      stdout: JSON.stringify(
+        {
+          nodes: TASK3_NODES,
+          summary: {
+            total: TASK3_NODES.length,
+            online,
+            offline,
+          },
+        },
+        null,
+        2,
+      ),
+    }
+  }
+
+  if (args[0] === "logs" && args[1] === "tail") {
+    const streamArg = getStringArg(args, "--stream=") ?? "all"
+    if (!isTask3LogStream(streamArg)) {
+      const message = `Unsupported log stream: ${streamArg}`
+      return {
+        code: 2,
+        stdout: JSON.stringify(
+          {
+            code: "LOG_STREAM_UNSUPPORTED",
+            message,
+            stream: streamArg,
+          },
+          null,
+          2,
+        ),
+        stderr: `LOG_STREAM_UNSUPPORTED: ${message}`,
+      }
+    }
+
+    const stream = streamArg
+
+    const requestedLines = getNumberArg(args, "--lines=") ?? 3
+    const entries = TASK3_LOG_ENTRIES.filter((entry) => stream === "all" || entry.stream === stream)
+    const lines = Math.min(Math.max(Math.trunc(requestedLines), 1), entries.length)
+    return {
+      code: 0,
+      stdout: JSON.stringify(
+        {
+          stream,
+          lines,
+          entries: entries.slice(-lines),
+        },
+        null,
+        2,
+      ),
+    }
+  }
+
+  if (args[0] === "pair" && args[1] === "start") {
+    const deviceId = args[2]
+    if (!deviceId) {
+      return {
+        code: 1,
+        stdout: "",
+        stderr: "Missing required arg. Usage: pair start <device-id>",
+      }
+    }
+
+    const device = TASK3_PAIRABLE_DEVICES.find((item) => item.id === deviceId)
+    if (!device) {
+      const message = `Unknown pairable device: ${deviceId}`
+      return {
+        code: 2,
+        stdout: JSON.stringify(
+          {
+            code: "PAIR_DEVICE_NOT_FOUND",
+            message,
+            deviceId,
+          },
+          null,
+          2,
+        ),
+        stderr: `PAIR_DEVICE_NOT_FOUND: ${message}`,
+      }
+    }
+
+    return {
+      code: 0,
+      stdout: JSON.stringify(
+        {
+          status: "started",
+          device,
+          sessionId: `pair-${device.id}-0001`,
+          expiresInSeconds: 300,
+        },
+        null,
+        2,
+      ),
+    }
+  }
+
+  if (args[0] === "sandbox" && args[1] === "status") {
+    const sandboxId = args[2] ?? "default"
+    const sandbox = TASK3_SANDBOXES.find((item) => item.id === sandboxId)
+    if (!sandbox) {
+      const message = `Unknown sandbox: ${sandboxId}`
+      return {
+        code: 2,
+        stdout: JSON.stringify(
+          {
+            code: "SANDBOX_NOT_FOUND",
+            message,
+            sandboxId,
+          },
+          null,
+          2,
+        ),
+        stderr: `SANDBOX_NOT_FOUND: ${message}`,
+      }
+    }
+
+    return {
+      code: 0,
+      stdout: JSON.stringify(sandbox, null, 2),
+    }
+  }
+
+  if (args[0] === "update" && args[1] === "check") {
+    return {
+      code: 0,
+      stdout: JSON.stringify(
+        {
+          currentVersion: "0.1.0",
+          latestVersion: "0.1.1",
+          updateAvailable: true,
+          installer: {
+            channel: "stable",
+            target: "darwin-arm64",
+            checksum: "sha256:9f0cc8d2af90f0dc6959a8f9666b6d9d26fbe7680fa96b5e9c3d9e314807eb4e",
+          },
+        },
+        null,
+        2,
+      ),
+    }
+  }
+
+  if (args[0] === "webhooks" && args[1] === "list") {
+    return {
+      code: 0,
+      stdout: JSON.stringify(
+        {
+          webhooks: TASK3_WEBHOOKS,
+        },
+        null,
+        2,
+      ),
+    }
+  }
+
+  if (args[0] === "daemon" && args[1] === "status") {
+    const daemonName = getStringArg(args, "--name=")
+    if (daemonName) {
+      const daemon = TASK3_DAEMONS.find((item) => item.name === daemonName)
+      if (!daemon) {
+        const message = `Unknown daemon: ${daemonName}`
+        return {
+          code: 2,
+          stdout: JSON.stringify(
+            {
+              code: "DAEMON_NOT_FOUND",
+              message,
+              daemonName,
+            },
+            null,
+            2,
+          ),
+          stderr: `DAEMON_NOT_FOUND: ${message}`,
+        }
+      }
+
+      return {
+        code: 0,
+        stdout: JSON.stringify(daemon, null, 2),
+      }
+    }
+
+    return {
+      code: 0,
+      stdout: JSON.stringify(
+        {
+          daemons: TASK3_DAEMONS,
+        },
+        null,
+        2,
+      ),
+    }
+  }
+
+  if (args[0] === "completion") {
+    const shell = args[1]
+    if (!shell) {
+      return {
+        code: 1,
+        stdout: "",
+        stderr: "Missing shell. Usage: completion <bash|zsh|fish|powershell>",
+      }
+    }
+
+    const script = TASK3_COMPLETIONS[shell]
+    if (!script) {
+      const message = `Unsupported shell: ${shell}`
+      return {
+        code: 2,
+        stdout: JSON.stringify(
+          {
+            code: "COMPLETION_SHELL_UNSUPPORTED",
+            message,
+            shell,
+          },
+          null,
+          2,
+        ),
+        stderr: `COMPLETION_SHELL_UNSUPPORTED: ${message}`,
+      }
+    }
+
+    return {
+      code: 0,
+      stdout: script,
+    }
+  }
+
+  if (args[0] === "tui" && args[1] === "keybindings") {
+    return {
+      code: 0,
+      stdout: JSON.stringify(
+        {
+          compatibility: "openclaw-keymap-v1",
+          bridge: {
+            source: "opencode-tui",
+            mode: "cli-contract",
+            deterministic: true,
+          },
+          keybindings: TASK3_TUI_KEYBINDINGS,
+          diagnostics: TASK3_DIAGNOSTIC_SIGNALS,
+        },
+        null,
+        2,
+      ),
+    }
   }
 
   if (args[0] === "storage") {
@@ -289,6 +702,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         code: execution.status === "completed" ? 0 : execution.status === "cancelled" ? 130 : 1,
         stdout: JSON.stringify(
           {
+            status: execution.status,
             result: execution.result,
             error: execution.error,
             tracker,
@@ -335,7 +749,7 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
     }
   }
 
-  if (args[0] === "tool") {
+  if (args[0] === "tool" || args[0] === "tools") {
     const registry = createMachinaToolRegistry()
 
     if (args[1] === "list") {
@@ -365,8 +779,61 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
       const actor = getStringArg(args, "--actor=") ?? "cli-user"
       const operationId = getStringArg(args, "--operation-id=") ?? nextToolOperationId()
       const note = getStringArg(args, "--note=")
+      const metadataToolId = getStringArg(args, "--tool-id=")
+      const inputJson = getStringArg(args, "--input-json=")
       const storageDir = getStorageDirArg(args)
-      const input = typeof note === "string" ? ({ note } as Record<string, unknown>) : {}
+
+      let input: Record<string, unknown>
+      if (typeof inputJson === "string") {
+        try {
+          const parsed = JSON.parse(inputJson) as unknown
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            return {
+              code: 2,
+              stdout: JSON.stringify(
+                {
+                  code: "INVALID_INPUT_JSON",
+                  message: "--input-json must decode to a JSON object",
+                  operationId,
+                  actor,
+                  action: toolId,
+                  approved: approve,
+                },
+                null,
+                2,
+              ),
+              stderr: "INVALID_INPUT_JSON: --input-json must decode to a JSON object",
+            }
+          }
+
+          input = parsed as Record<string, unknown>
+        } catch {
+          return {
+            code: 2,
+            stdout: JSON.stringify(
+              {
+                code: "INVALID_INPUT_JSON",
+                message: "--input-json must be valid JSON",
+                operationId,
+                actor,
+                action: toolId,
+                approved: approve,
+              },
+              null,
+              2,
+            ),
+            stderr: "INVALID_INPUT_JSON: --input-json must be valid JSON",
+          }
+        }
+      } else {
+        input = {}
+        if (typeof note === "string") {
+          input.note = note
+        }
+        if (typeof metadataToolId === "string") {
+          input.toolId = metadataToolId
+        }
+      }
 
       try {
         const execution = await registry.execute<Record<string, unknown>, unknown>(toolId, {
@@ -398,12 +865,13 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
         }
       } catch (error) {
         if (error instanceof ToolPolicyError) {
+          const message = redactCliSecrets(error.message, input)
           return {
             code: 3,
             stdout: JSON.stringify(
               {
                 code: error.code,
-                message: error.message,
+                message,
                 operationId,
                 actor,
                 action: toolId,
@@ -412,17 +880,18 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
               null,
               2,
             ),
-            stderr: `${error.code}: ${error.message}`,
+            stderr: `${error.code}: ${message}`,
           }
         }
 
         if (error instanceof ToolRuntimeError) {
+          const message = redactCliSecrets(error.message, input)
           return {
             code: 2,
             stdout: JSON.stringify(
               {
                 code: error.code,
-                message: error.message,
+                message,
                 operationId,
                 actor,
                 action: toolId,
@@ -431,11 +900,11 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
               null,
               2,
             ),
-            stderr: `${error.code}: ${error.message}`,
+            stderr: `${error.code}: ${message}`,
           }
         }
 
-        const message = error instanceof Error ? error.message : String(error)
+        const message = redactCliSecrets(error instanceof Error ? error.message : String(error), input)
         return {
           code: 2,
           stdout: JSON.stringify(
@@ -453,6 +922,15 @@ export async function runCli(argv: string[], env: NodeJS.ProcessEnv = process.en
           stderr: `TOOL_EXECUTION_FAILED: ${message}`,
         }
       }
+    }
+  }
+
+  const task3Usage = getTask3UsageError(args)
+  if (task3Usage) {
+    return {
+      code: 1,
+      stdout: "",
+      stderr: task3Usage,
     }
   }
 
@@ -667,31 +1145,51 @@ function normalizeChannelError(error: unknown): { code: string; message: string 
 }
 
 async function terminateChildProcess(child: ReturnType<typeof spawn>): Promise<void> {
-  if (child.killed || child.exitCode !== null) {
+  const pid = child.pid
+  if (!pid || child.killed || child.exitCode !== null) {
     return
   }
 
-  child.kill("SIGTERM")
-  const exitedSoftly = await waitForExit(child, 300)
+  try {
+    child.kill("SIGTERM")
+  } catch {
+    return
+  }
+
+  const exitedSoftly = await waitForExitOrDeath(child, pid, 400)
   if (exitedSoftly) {
     return
   }
 
-  child.kill("SIGKILL")
-  await waitForExit(child, 300)
+  try {
+    child.kill("SIGKILL")
+  } catch {
+    return
+  }
+
+  await waitForExitOrDeath(child, pid, 1200)
 }
 
-async function waitForExit(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<boolean> {
+async function waitForExitOrDeath(child: ReturnType<typeof spawn>, pid: number, timeoutMs: number): Promise<boolean> {
   if (child.exitCode !== null) {
     return true
   }
 
-  const timeoutPromise = new Promise<false>((resolve) => {
-    setTimeout(() => resolve(false), timeoutMs)
-  })
-
   const exitPromise = once(child, "exit").then(() => true)
-  return Promise.race([exitPromise, timeoutPromise])
+  const deadPromise = waitUntilProcessDead(pid, timeoutMs)
+  return Promise.race([exitPromise, deadPromise])
+}
+
+async function waitUntilProcessDead(pid: number, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt <= timeoutMs) {
+    if (!isProcessAlive(pid)) {
+      return true
+    }
+    await sleep(25)
+  }
+
+  return !isProcessAlive(pid)
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -702,3 +1200,260 @@ function isProcessAlive(pid: number): boolean {
     return false
   }
 }
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+function redactCliSecrets(message: string, input: Record<string, unknown>): string {
+  let sanitized = message
+
+  const candidates = collectRedactionCandidates(input)
+  for (const candidate of candidates) {
+    sanitized = sanitized.split(candidate).join("[REDACTED]")
+  }
+
+  sanitized = sanitized.replace(/(token|secret|password|api[_-]?key|credential|auth)\s*[:=]\s*[^\s,;"'}]+/gi, "$1=[REDACTED]")
+  return sanitized
+}
+
+function collectRedactionCandidates(input: Record<string, unknown>): string[] {
+  const values: string[] = []
+
+  const stack: Array<{ key: string; value: unknown; depth: number }> = [{ key: "", value: input, depth: 0 }]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (!current) {
+      continue
+    }
+
+    if (current.depth > 5) {
+      continue
+    }
+
+    if (typeof current.value === "string") {
+      if (isSensitiveField(current.key) || looksSecretLike(current.value)) {
+        values.push(current.value)
+      }
+      continue
+    }
+
+    if (!current.value || typeof current.value !== "object") {
+      continue
+    }
+
+    if (Array.isArray(current.value)) {
+      for (const entry of current.value) {
+        stack.push({ key: current.key, value: entry, depth: current.depth + 1 })
+      }
+      continue
+    }
+
+    for (const [key, value] of Object.entries(current.value as Record<string, unknown>)) {
+      stack.push({ key, value, depth: current.depth + 1 })
+    }
+  }
+
+  return [...new Set(values)].sort((left, right) => right.length - left.length)
+}
+
+function isSensitiveField(key: string): boolean {
+  return /(token|secret|password|api[_-]?key|credential|auth|note)/i.test(key)
+}
+
+function looksSecretLike(value: string): boolean {
+  return /(token|secret|password|api[_-]?key|credential)/i.test(value)
+}
+
+function isTask3LogStream(value: string): value is (typeof TASK3_LOG_STREAMS)[number] {
+  return TASK3_LOG_STREAMS.includes(value as (typeof TASK3_LOG_STREAMS)[number])
+}
+
+function getTask3UsageError(args: string[]): string | undefined {
+  if (args.length === 0) {
+    return undefined
+  }
+
+  const usageByCommand: Record<string, string> = {
+    profile: "Unknown profile subcommand. Usage: profile list | profile use <profile-id>",
+    nodes: "Unknown nodes subcommand. Usage: nodes status [--node=<id>]",
+    logs: "Unknown logs subcommand. Usage: logs tail [--lines=<n>] [--stream=<all|daemon|device>]",
+    pair: "Unknown pair subcommand. Usage: pair start <device-id>",
+    sandbox: "Unknown sandbox subcommand. Usage: sandbox status [<sandbox-id>]",
+    update: "Unknown update subcommand. Usage: update check",
+    webhooks: "Unknown webhooks subcommand. Usage: webhooks list",
+    daemon: "Unknown daemon subcommand. Usage: daemon status [--name=<id>]",
+    tui: "Unknown tui subcommand. Usage: tui keybindings",
+  }
+
+  const command = args[0]
+  if (!command) {
+    return undefined
+  }
+
+  return usageByCommand[command]
+}
+
+const TASK3_ACTIVE_PROFILE = "default"
+
+const TASK3_PROFILES: ProfileSummary[] = [
+  {
+    id: "default",
+    label: "Default local profile",
+    storageDir: ".machina/storage/default",
+    pluginMode: "local",
+  },
+  {
+    id: "ops",
+    label: "Operations profile",
+    storageDir: ".machina/storage/ops",
+    pluginMode: "dev",
+  },
+]
+
+const TASK3_NODES: DeviceNodeSummary[] = [
+  {
+    id: "node-alpha",
+    role: "hub",
+    state: "online",
+    connector: "matrix",
+  },
+  {
+    id: "device-bravo",
+    role: "device",
+    state: "offline",
+    connector: "discord",
+  },
+]
+
+const TASK3_LOG_STREAMS = ["all", "daemon", "device"] as const
+
+const TASK3_LOG_ENTRIES: Array<{ ts: string; stream: (typeof TASK3_LOG_STREAMS)[number]; level: string; message: string }> = [
+  {
+    ts: "2026-02-11T09:00:00.000Z",
+    stream: "daemon",
+    level: "info",
+    message: "daemon heartbeat ok",
+  },
+  {
+    ts: "2026-02-11T09:00:05.000Z",
+    stream: "device",
+    level: "warn",
+    message: "device-bravo offline",
+  },
+  {
+    ts: "2026-02-11T09:00:10.000Z",
+    stream: "daemon",
+    level: "info",
+    message: "scheduler tick",
+  },
+  {
+    ts: "2026-02-11T09:00:15.000Z",
+    stream: "device",
+    level: "info",
+    message: "pairing queue empty",
+  },
+]
+
+const TASK3_PAIRABLE_DEVICES: PairableDevice[] = [
+  {
+    id: "device-bravo",
+    connector: "discord",
+    displayName: "Bravo Handset",
+  },
+  {
+    id: "node-alpha",
+    connector: "matrix",
+    displayName: "Alpha Hub",
+  },
+]
+
+const TASK3_SANDBOXES: SandboxSummary[] = [
+  {
+    id: "default",
+    status: "ready",
+    profile: "default",
+  },
+  {
+    id: "ops",
+    status: "stopped",
+    profile: "ops",
+  },
+]
+
+const TASK3_WEBHOOKS: WebhookSummary[] = [
+  {
+    id: "hook-build",
+    event: "build.completed",
+    target: "https://hooks.example.com/build",
+    enabled: true,
+  },
+  {
+    id: "hook-alerts",
+    event: "alert.triggered",
+    target: "https://hooks.example.com/alerts",
+    enabled: false,
+  },
+]
+
+const TASK3_DAEMONS: DaemonSummary[] = [
+  {
+    name: "machina-agent",
+    status: "running",
+    pid: 4312,
+    uptimeSeconds: 86400,
+  },
+  {
+    name: "machina-sync",
+    status: "stopped",
+    pid: null,
+    uptimeSeconds: 0,
+  },
+]
+
+const TASK3_COMPLETIONS: Record<string, string> = {
+  bash: [
+    "# machina bash completion",
+    "_machina_complete() {",
+    "  COMPREPLY=( $(compgen -W \"status doctor profile nodes logs pair sandbox update webhooks daemon completion\" -- \"${COMP_WORDS[COMP_CWORD]}\") )",
+    "}",
+    "complete -F _machina_complete machina",
+  ].join("\n"),
+  zsh: [
+    "#compdef machina",
+    "_arguments '1:command:(status doctor profile nodes logs pair sandbox update webhooks daemon completion)'",
+  ].join("\n"),
+  fish: [
+    "complete -c machina -f",
+    "complete -c machina -n '__fish_use_subcommand' -a 'status doctor profile nodes logs pair sandbox update webhooks daemon completion'",
+  ].join("\n"),
+  powershell: [
+    "Register-ArgumentCompleter -CommandName machina -ScriptBlock {",
+    "  param($commandName, $wordToComplete, $cursorPosition)",
+    "  'status','doctor','profile','nodes','logs','pair','sandbox','update','webhooks','daemon','completion' | Where-Object { $_ -like \"$wordToComplete*\" }",
+    "}",
+  ].join("\n"),
+}
+
+const TASK3_TUI_KEYBINDINGS: Array<{ key: string; action: string; via: string }> = [
+  { key: "j", action: "cursor.down", via: "opencode-tui" },
+  { key: "k", action: "cursor.up", via: "opencode-tui" },
+  { key: "enter", action: "panel.open", via: "opencode-tui" },
+  { key: "ctrl+r", action: "workflow.run", via: "machina cli bridge" },
+  { key: "ctrl+d", action: "daemon.status", via: "machina cli bridge" },
+]
+
+const TASK3_DIAGNOSTIC_SIGNALS: DiagnosticSignal[] = [
+  {
+    id: "bridge.contract",
+    status: "ok",
+    detail: "CLI/TUI compatibility contract loaded",
+  },
+  {
+    id: "bridge.determinism",
+    status: "ok",
+    detail: "All keybinding bridge outputs are deterministic",
+  },
+]

@@ -166,6 +166,10 @@ export class ChannelRegistry {
       }
     }
 
+    if (current.status === "disconnected") {
+      return this.toStatus(channelId, current)
+    }
+
     const connector = this.connectors.get(current.connectorId)
     if (!connector) {
       throw new ChannelRuntimeError("CONNECTOR_NOT_FOUND", `Connector not found: ${current.connectorId}`)
@@ -274,19 +278,25 @@ function normalizeChannelError(error: unknown): { code: string; message: string 
   if (error instanceof ChannelRuntimeError) {
     return {
       code: error.code,
-      message: error.message,
+      message: sanitizeErrorMessage(error.message),
     }
   }
 
   if (error instanceof Error) {
     return {
       code: "CHANNEL_CONNECT_FAILED",
-      message: error.message,
+      message: sanitizeErrorMessage(error.message),
     }
   }
 
   return {
     code: "CHANNEL_CONNECT_FAILED",
-    message: String(error),
+    message: sanitizeErrorMessage(String(error)),
   }
+}
+
+function sanitizeErrorMessage(message: string): string {
+  return message
+    .replace(/\b(token|secret|password|apikey|api-key|access[_-]?token)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .replace(/\b[a-z0-9_-]{24,}\b/gi, "[REDACTED]")
 }

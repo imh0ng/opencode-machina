@@ -345,16 +345,24 @@ function createReadyState(version: number): SchemaState {
 }
 
 async function recoverInterruptedMigration(paths: StoragePaths, state: SchemaState): Promise<void> {
-  if (!state.backupPath || !(await fileExists(state.backupPath))) {
-    throw new MachinaStorageError(
-      "MIGRATION_RECOVERY_FAILED",
-      "Interrupted migration cannot recover because backup file is missing",
-    )
+  const backupPath = state.backupPath ?? paths.backupFile
+  if (!(await fileExists(backupPath))) {
+    try {
+      await readSessionRecords(paths.sessionsFile)
+    } catch {
+      throw new MachinaStorageError(
+        "MIGRATION_RECOVERY_FAILED",
+        "Interrupted migration cannot recover without backup because session data is invalid",
+      )
+    }
+
+    await writeJsonAtomic(paths.schemaStateFile, createReadyState(state.schemaVersion))
+    return
   }
 
-  await copyFileAtomic(state.backupPath, paths.sessionsFile)
+  await copyFileAtomic(backupPath, paths.sessionsFile)
   await writeJsonAtomic(paths.schemaStateFile, createReadyState(state.schemaVersion))
-  await deleteIfExists(state.backupPath)
+  await deleteIfExists(backupPath)
 }
 
 async function backupSessions(paths: StoragePaths): Promise<void> {
