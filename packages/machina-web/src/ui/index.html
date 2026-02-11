@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Machina Local Web UI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="brand">
+                <span class="robot-icon">🤖</span>
+                <h1>Machina</h1>
+            </div>
+            <div class="controls">
+                <button id="theme-toggle" aria-label="Toggle theme">
+                    <span class="icon-sun">☀️</span>
+                    <span class="icon-moon">🌙</span>
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <section class="status-card">
+                <h2>System Status</h2>
+                <div class="status-indicator">
+                    <div class="dot"></div>
+                    <span id="health-status">Checking...</span>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Machina v0.0.1</p>
+        </footer>
+    </div>
+    <script type="module" src="app.js"></script>
+</body>
+</html>

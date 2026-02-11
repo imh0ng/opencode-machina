@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "opencode-machina",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "install": "bun --version",
+    "run": "bun script/run.ts",
+    "build": "bun --cwd=packages/machina-shared run build && bun --cwd=packages/machina-plugin run build && bun --cwd=packages/machina-cli run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "1.0.9",
+    "@types/bun": "1.3.8",
+    "typescript": "5.7.3"
+  }
+}
