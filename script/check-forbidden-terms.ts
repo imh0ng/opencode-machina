@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { relative, resolve, sep } from "node:path"
+import { fileURLToPath } from "node:url"
 
-const ROOT = resolve("/Users/hong/machina-project/opencode-machina")
+const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)))
 const EXCLUDED_DIRS = new Set([".git", "node_modules", "dist", "build", ".next", "out", "coverage", ".turbo"])
 const TEXT_EXTENSIONS = new Set([".md", ".mdx", ".txt", ".yml", ".yaml", ".json", ".svg"])
 const PATTERN = /open[\s_-]?claw|borrowed from|derived from|ported from|fork(?:ed)? from|based on|inspired by|adapted from/i
